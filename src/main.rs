@@ -5,7 +5,7 @@ use std::thread::JoinHandle;
 use std::time::SystemTime;
 
 #[derive(Parser, Debug)]
-#[command(version = "0.2.0-dev", about = None, long_about = None)]
+#[command(version = env!("CARGO_PKG_VERSION"), about = None, long_about = None)]
 struct Args {
     /// How many iterations to run
     #[arg(short, long = "iters", default_value_t = 20, value_parser = value_parser!(u32).range(1..))]
