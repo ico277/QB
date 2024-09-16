@@ -35,12 +35,12 @@ where
 {
     let mut args = args.into_iter();
 
-    // create command
+    // create command with arguments
     let mut binding = Command::new(args.next().unwrap());
     let cmd = binding.args(args);
     let cmd = cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
 
-    // create timestamp
+    // create timestamp     
     let now = SystemTime::now();
 
     // run command
@@ -52,7 +52,7 @@ where
         .as_millis()
 }
 
-fn run_cmd_threads<S, I>(cmd: I) -> JoinHandle<u128>
+fn run_cmd_thread<S, I>(cmd: I) -> JoinHandle<u128>
 where
     I: IntoIterator<Item = S> + Send + 'static,
     S: AsRef<std::ffi::OsStr> + Send + 'static,
@@ -72,13 +72,16 @@ fn main() {
     let mut total_time: u128 = 0;
     // threading
     if let Some(threads) = args.threads {
+        // to keep track of how many iterations actually ran
         let mut ran_iterations = 0;
         while ran_iterations < iterations {
+            // to store the JoinHandles of running threads
             let mut handles: Vec<JoinHandle<u128>> = Vec::with_capacity(threads as usize);
+            // run threads
             for i in 0..threads {
                 println!("Running iteration on thread {}", i + 1);
-                let cmd_clone = cmd.clone(); // Clone `cmd` for each thread
-                                             // run command
+                let cmd_clone = cmd.clone(); // clone cmd for each thread
+                // generate the command args with the given cli arguments
                 let cmd_to_run = if args.nullpipe {
                     vec![
                         "sh".to_string(),
@@ -91,20 +94,26 @@ fn main() {
                     vec![cmd_clone]
                 };
 
-                handles.push(run_cmd_threads(cmd_to_run))
+                // run the command in a thread and store the JoinHandle
+                handles.push(run_cmd_thread(cmd_to_run))
             }
+            // loop through every thread's JoinHandle
+            // and wait for it to be finished 
             for handle in handles {
                 total_time += handle.join().unwrap();
                 ran_iterations += 1;
             }
         }
+        // in case iterations is not perfectly divisibe by threads
+        // will cause more iterations to run than asked for
+        // so to not break any math adjust iterations
         iterations = ran_iterations;
     }
     // single threading
     else {
         for i in 0..iterations {
             println!("Running iteration {}", i + 1);
-            // run command
+            // generate cmd and run command
             if args.nullpipe {
                 total_time += run_cmd(vec!["sh", "-c", format!("{cmd} 2>&1 > /dev/null").as_str()]);
             } else if args.shell {
@@ -115,7 +124,7 @@ fn main() {
         }
     }
     // calculate (convering to milliseconds aswell) and print average
-    println!(
+    println!( 
         "Iterations: {}\nTotal time: ~{:.3}s\nAverage time: ~{:.3}s",
         iterations,
         total_time as f64 / 1000f64,
