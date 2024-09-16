@@ -16,6 +16,7 @@ struct Args {
     shell: bool,
 
     /// Piping output to /dev/null (infers --shell)
+    /// (!!! Does not do anything under windows for now !!!)
     #[arg(short, long, default_value_t = false)]
     nullpipe: bool,
 
@@ -28,22 +29,52 @@ struct Args {
     threads: Option<u32>,
 }
 
-fn run_cmd<S, I>(args: I) -> u128
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<std::ffi::OsStr>,
-{
-    let mut args = args.into_iter();
+fn run_cmd(cmd: String, nullpipe: bool, shell: bool) -> u128 {
+    // generate the command args with the given cli arguments
+    let cmd_to_run = if nullpipe || shell {
+        #[cfg(unix)]
+        {
+            "sh".to_string()
+        }
+        #[cfg(target_os = "windows")]
+        {
+            "cmd.exe".to_string()
+        }
+    } else {
+        cmd.clone()
+    };
+    let args = if nullpipe {
+        #[cfg(unix)]
+        {
+            Some(vec!("-c".to_string(), format!("{cmd} 2>&1 > /dev/null")))
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Some(vec!("/c".to_string(), cmd))
+        }
+    } else if shell {
+        #[cfg(unix)]
+        {
+            Some(vec!("-c".to_string(), cmd))
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Some(vec!("/c".to_string(), cmd))
+        }
+    } else {
+        None
+    };
 
-    // create command with arguments
-    let mut binding = Command::new(args.next().unwrap());
-    let cmd = binding.args(args);
-    let cmd = cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
-
-    // create timestamp     
+    // create timestamp
     let now = SystemTime::now();
 
     // run command
+    let mut binding = Command::new(cmd_to_run);
+    let cmd = match args {
+        Some(s) => binding.args(s),
+        None => &mut binding,
+    };
+    let cmd = cmd.stderr(Stdio::inherit()).stdout(Stdio::inherit());
     let _status = cmd.status().expect("failed to run command!");
 
     // return time elapsed in milliseconds
@@ -52,12 +83,8 @@ where
         .as_millis()
 }
 
-fn run_cmd_thread<S, I>(cmd: I) -> JoinHandle<u128>
-where
-    I: IntoIterator<Item = S> + Send + 'static,
-    S: AsRef<std::ffi::OsStr> + Send + 'static,
-{
-    thread::spawn(move || run_cmd(cmd))
+fn run_cmd_thread(cmd: String, nullpipe: bool, shell: bool) -> JoinHandle<u128> {
+    thread::spawn(move || run_cmd(cmd, nullpipe, shell))
 }
 
 fn main() {
@@ -80,25 +107,11 @@ fn main() {
             // run threads
             for i in 0..threads {
                 println!("Running iteration on thread {}", i + 1);
-                let cmd_clone = cmd.clone(); // clone cmd for each thread
-                // generate the command args with the given cli arguments
-                let cmd_to_run = if args.nullpipe {
-                    vec![
-                        "sh".to_string(),
-                        "-c".to_string(),
-                        cmd_clone + " 2>&1 > /dev/null",
-                    ]
-                } else if args.shell {
-                    vec!["sh".to_string(), "-c".to_string(), cmd_clone]
-                } else {
-                    vec![cmd_clone]
-                };
-
                 // run the command in a thread and store the JoinHandle
-                handles.push(run_cmd_thread(cmd_to_run))
+                handles.push(run_cmd_thread(cmd.clone(), args.nullpipe, args.shell));
             }
             // loop through every thread's JoinHandle
-            // and wait for it to be finished 
+            // and wait for it to be finished
             for handle in handles {
                 total_time += handle.join().unwrap();
                 ran_iterations += 1;
@@ -114,17 +127,11 @@ fn main() {
         for i in 0..iterations {
             println!("Running iteration {}", i + 1);
             // generate cmd and run command
-            if args.nullpipe {
-                total_time += run_cmd(vec!["sh", "-c", format!("{cmd} 2>&1 > /dev/null").as_str()]);
-            } else if args.shell {
-                total_time += run_cmd(vec!["sh", "-c", cmd.as_str()]);
-            } else {
-                total_time += run_cmd(vec![cmd.clone()]);
-            }
+            total_time += run_cmd(cmd.clone(), args.nullpipe, args.shell)
         }
     }
     // calculate (convering to milliseconds aswell) and print average
-    println!( 
+    println!(
         "Iterations: {}\nTotal time: ~{:.3}s\nAverage time: ~{:.3}s",
         iterations,
         total_time as f64 / 1000f64,
